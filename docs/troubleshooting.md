@@ -18,6 +18,30 @@ with an exception, if there was one, on the following line. Only `Information` a
 
 When reporting a problem, attach the relevant `launcher-*.log` and `manager-*.log` — they are far more useful than a screenshot.
 
+### Popup startup timing
+
+Every popup writes two lines that say where the time between the click and the popup went:
+
+```
+Startup timing (ms from tStart, processAge=…): aumid=… settings=… di=… theme=… vm=… window=… placed=… show=… loaded=…
+First render (ms from tStart, processAge=…, runtime=…): shown=… activated=… icons=… rendered=…
+```
+
+The checkpoints are cumulative milliseconds from the first line of the launcher's own code, so the cost of a step is the difference to the checkpoint before it.
+
+| Value | Reached when |
+|---|---|
+| `aumid`, `settings`, `di`, `theme`, `vm` | The identity is stamped, settings are read, the services are built, the theme is merged, the group is loaded |
+| `window` | The popup window object exists |
+| `placed` | Its native window exists and size and position are computed |
+| `loaded` | Layout is done. Nothing has been drawn yet; `show` equals `loaded` |
+| `shown`, `activated`, `icons` | `Show()` has returned, activation was requested, icon loading was started |
+| `rendered` | The first frame has been handed over for drawing |
+| `processAge` | Milliseconds since the process started, taken when that line was written |
+| `runtime` | The part of `processAge` spent before the launcher's own code ran: starting .NET and loading WPF |
+
+`rendered` is not the moment pixels arrive on screen, and it does not include the time Windows needs to start the process after the click. A slow popup with small numbers here is being held up outside the launcher.
+
 ### Launcher exit codes
 
 The launcher records why it gave up before it exits.

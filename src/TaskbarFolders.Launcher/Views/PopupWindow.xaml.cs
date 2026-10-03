@@ -83,9 +83,9 @@ public partial class PopupWindow : Window
         else
         {
             // Either animations are disabled OR the storyboard resource was not found.
-            // The XAML defaults Opacity=0 + ScaleX/Y=0.5 mean a missing storyboard would
-            // leave the popup permanently invisible — snap to the end state so the user
-            // always sees the popup, regardless of resource lookup outcome.
+            // The XAML defaults Opacity=0.5 + ScaleX/Y=0.9 mean a missing storyboard would
+            // leave the popup permanently faded and undersized — snap to the end state so
+            // the user always sees the finished popup, regardless of resource lookup outcome.
             SnapToEndState();
         }
 
@@ -211,7 +211,7 @@ public partial class PopupWindow : Window
     /// <summary>
     /// Schedules <see cref="Storyboard.Begin(System.Windows.FrameworkElement)"/> on the next
     /// dispatcher Render cycle and arms a 500 ms safety-net that force-snaps to the end state
-    /// if the popup is still invisible. v0.4.1 used <see cref="CompositionTarget.Rendering"/>,
+    /// if the popup has not reached it. v0.4.1 used <see cref="CompositionTarget.Rendering"/>,
     /// but Win11 24H2 can skip the composition pass entirely for fully-transparent windows —
     /// <c>Rendering</c> never fires and the popup stays invisible forever. A
     /// <see cref="Dispatcher.BeginInvoke(DispatcherPriority, Delegate)"/> at Render priority
@@ -255,7 +255,11 @@ public partial class PopupWindow : Window
         _safetyTimer.Tick += (_, _) =>
         {
             _safetyTimer?.Stop();
-            if (chrome.Opacity < 0.5)
+
+            // The start state is half-opaque, so "still below 0.5" can no longer tell a
+            // stuck animation from a finished one. Anything short of the end state after
+            // 500 ms means the storyboard never ran to completion.
+            if (chrome.Opacity < 1)
             {
                 SnapToEndState();
             }

@@ -178,10 +178,10 @@ public partial class App : Application
     /// </summary>
     private async Task RunPopupModeAsync(StartupEventArgs e, string groupId, bool aumidAlreadyInherited)
     {
-        // v0.4.1: per-checkpoint Stopwatch timestamps so the launcher-*.log shows where the
-        // user's perceived popup-open time goes. The single LogInformation line at the end
-        // is the only output the user has to look at. GetTimestamp() costs ~10 ns per call;
-        // negligible against the 100s of ms we are profiling.
+        // Per-checkpoint Stopwatch timestamps so the launcher-*.log shows where the user's
+        // perceived popup-open time goes. Two lines come out of it: "Startup timing" from
+        // Loaded and "First render" from ContentRendered. GetTimestamp() costs ~10 ns per
+        // call; negligible against the 100s of ms we are profiling.
         var tStart = Stopwatch.GetTimestamp();
 
         // Per-monitor DPI awareness must be set BEFORE the cursor capture below, not just
@@ -275,36 +275,65 @@ public partial class App : Application
         var tVm = Stopwatch.GetTimestamp();
 
         var popup = _services.GetRequiredService<Views.PopupWindow>();
+        var tWindow = Stopwatch.GetTimestamp();
         MainWindow = popup;
 
-        // Single timing summary, emitted from the Loaded handler so we also capture the
-        // "from process start to user-visible first paint" wall-clock (tLoaded), not just
-        // up to Show(). `processAge` is the time from Process.StartTime to tStart —
-        // captures the .NET runtime cold-start cost (native-lib extraction, JIT, WPF
-        // assembly load) that happens BEFORE RunPopupModeAsync is even called. Without
-        // this, the log would mislead into chasing later phases when the dominant cost
-        // is often runtime bootstrap.
+        // Timing summary, emitted from the Loaded handler. `processAge` is the wall-clock
+        // from Process.StartTime to the moment the handler runs — not to tStart. What
+        // elapsed before RunPopupModeAsync was entered (host start-up, runtime init, WPF
+        // assembly load) is therefore processAge minus the last checkpoint; the
+        // ContentRendered line below reports it explicitly as `runtime`. Loaded is not a
+        // paint: layout is done, nothing has been rendered yet.
         //
         // Subscribe BEFORE Show(): a Window raises Loaded synchronously inside Show(), so
         // a handler attached afterwards never runs (v0.4.1/v0.4.2 emitted no timing line
         // at all because of this). tShown is still captured after Show() returns; if
         // Loaded ran inside Show() the checkpoint falls back to tLoaded to stay monotonic.
         var processStart = Process.GetCurrentProcess().StartTime;
+        long tPlaced = 0;
         long tShown = 0;
+        long tActivated = 0;
+        long tIcons = 0;
+
+        // Attached after the constructor, so it runs after the window's own
+        // SourceInitialized handler: the HWND exists and size + placement are computed.
+        popup.SourceInitialized += (_, _) => tPlaced = Stopwatch.GetTimestamp();
+
         popup.Loaded += (_, _) =>
         {
             var tLoaded = Stopwatch.GetTimestamp();
             var processAge = (DateTime.Now - processStart).TotalMilliseconds;
             logger.LogInformation(
-                "Startup timing (ms from tStart, processAge={ProcAge:F0}): aumid={Aumid:F0} settings={Settings:F0} di={Di:F0} theme={Theme:F0} vm={Vm:F0} show={Show:F0} loaded={Loaded:F0}",
+                "Startup timing (ms from tStart, processAge={ProcAge:F0}): aumid={Aumid:F0} settings={Settings:F0} di={Di:F0} theme={Theme:F0} vm={Vm:F0} window={Window:F0} placed={Placed:F0} show={Show:F0} loaded={Loaded:F0}",
                 processAge,
                 ToMs(tStart, tAumid),
                 ToMs(tStart, tSettings),
                 ToMs(tStart, tDi),
                 ToMs(tStart, tTheme),
                 ToMs(tStart, tVm),
+                ToMs(tStart, tWindow),
+                ToMs(tStart, tPlaced != 0 ? tPlaced : tLoaded),
                 ToMs(tStart, tShown != 0 ? tShown : tLoaded),
                 ToMs(tStart, tLoaded));
+        };
+
+        // Second line, kept separate so the Loaded line survives if this one never comes.
+        // ContentRendered is queued at Input priority and so runs once the UI thread's
+        // render queue has drained: it marks the first frame being handed to the render
+        // thread, not its arrival on screen. The checkpoints between Show() and here are
+        // the synchronous work that stands between Loaded and that first frame.
+        popup.ContentRendered += (_, _) =>
+        {
+            var rendered = ToMs(tStart, Stopwatch.GetTimestamp());
+            var processAge = (DateTime.Now - processStart).TotalMilliseconds;
+            logger.LogInformation(
+                "First render (ms from tStart, processAge={ProcAge:F0}, runtime={Runtime:F0}): shown={Shown:F0} activated={Activated:F0} icons={Icons:F0} rendered={Rendered:F0}",
+                processAge,
+                processAge - rendered,
+                ToMs(tStart, tShown),
+                ToMs(tStart, tActivated),
+                ToMs(tStart, tIcons),
+                rendered);
         };
 
         popup.Show();
@@ -314,8 +343,10 @@ public partial class App : Application
         // reliably take foreground when Explorer still owns it from the tile click, and
         // dismiss-on-focus-loss depends on the popup having been activated once.
         popup.Activate();
+        tActivated = Stopwatch.GetTimestamp();
 
         viewModel.StartIconLoad();
+        tIcons = Stopwatch.GetTimestamp();
 
         // Deferred startup IO: prune stale icon-cache PNGs and old log files in the background
         // so the first paint of the popup is not blocked by ~10-70 ms of enumerate-and-delete.

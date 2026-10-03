@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The popup is visible from its first frame.** The open animation faded in from fully transparent over 200 ms, and it could only start once the first frame had been drawn — several hundred milliseconds after the click. That first frame therefore showed nothing, and the popup became recognisable only part-way through the fade. It now starts half-opaque at 90 % size and settles in 110 ms, so the popup is on screen with the first frame and finished about 90 ms sooner. The 500 ms safety net that snaps a stuck popup to its final appearance now triggers on anything short of that appearance; with a half-opaque start, its old "still nearly invisible" test would never have fired again. Turning *Enable popup animations* off behaves as before.
+
 ### Fixed
 
 - **Popup height grows with the launch-failure strip.** When a launch failed, the red error strip docked to the bottom of the popup without changing `Window.Height`, so it stole space from the fixed 96 px tiles and clipped the bottom row. Height now comes from measuring the popup chrome, clamped to `MinHeight`/`MaxHeight`, and placement is refreshed so the taller popup still clears the taskbar.
 
 ### Internal
 
+- The launcher's startup timing says where the popup's time goes after the group is loaded. The existing line stopped at `vm` and then jumped to `loaded`, leaving the largest block — roughly 300 ms of building and showing the window — as a single number. It now carries `window` (the popup object exists) and `placed` (native window created, size and position computed), and a second line, `First render`, written from `ContentRendered`, covers what happens after `Show()` returns: `shown`, `activated`, `icons` and `rendered`, plus `runtime` for the share spent starting .NET and WPF before any launcher code ran. `processAge` was documented in the code as the time up to the launcher's first line; it is, and always was, the time up to the moment the line is written. Both lines are described in `docs/troubleshooting.md`. Diagnostics only — nothing about the popup's behaviour changes.
 - The XML documentation rule is enforced rather than asserted. `.editorconfig` set `CS1591` to `warning`, but no project generated a documentation file, so the compiler never emitted the diagnostic and two documents claimed an enforcement that did not exist. `Directory.Build.props` now generates one for the `src` projects; the three test projects switch it off, where xUnit's public classes would demand hundreds of comments that document nothing. No documentation had to be written — all 349 publicly visible declarations in `src` already had it. Proven both ways: an undocumented public member fails the build, and removing a test project's opt-out produces 268 errors.
 - `CONTRIBUTING.md` now says which commit trailers are unwanted, which it never did — the rule lived only in the internal notes, where a contributor could not be expected to find it, and was worded broadly enough to read as a ban on crediting human co-authors. It is not: tools are not co-authors, people are.
 - The popup's effective ceiling — eight rows, 24 apps at three columns, and no scrolling past it — is recorded as a known limitation and tracked as an issue, rather than left for a user to discover by losing tiles.
